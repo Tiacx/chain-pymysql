@@ -29,16 +29,16 @@ Easy to use PyMySQL.
         + [3.4.6 追加查询 and_where](#346-追加查询-and_where)
         + [3.4.7 OR 查询 or_where](#347-or-查询-or_where)
         + [3.4.8 其他操作符](#348-其他操作符)
-+ [四、查询构建器（QUERY BUILDER）](#四查询构建器query builder)
++ [四、查询构建器（QUERY BUILDER）](#四查询构建器query-builder)
     + [4.1 选择字段 select](#41-选择字段-select)
     + [4.2 联表查询 join](#42-联表查询-join)
     + [4.3 分组及排序 group_by order_by](#43-分组及排序-group_by-order_by)
     + [4.4 结果筛选 having](#44-结果筛选-having)
     + [4.5 分页查询 skip limit](#45-分页查询-skip-limit)
-+ [五、执行原生SQL（RAW SQL）](#五执行原生sqlraw sql)
++ [五、执行原生SQL（RAW SQL）](#五执行原生sqlraw-sql)
     + [5.1 执行原生SQL示例](#51-执行原生sql示例)
     + [5.2 使用助手函数来拼接SQL（防注入）](#52-使用助手函数来拼接sql防注入)
-+ [六、返回值（RETURNED VALUE）](#六返回值returned value)
++ [六、返回值（RETURNED VALUE）](#六返回值returned-value)
     + [6.1 统计 count](#61-统计-count)
     + [6.2 多行 all](#62-多行-all)
     + [6.3 单行 one](#63-单行-one)
@@ -586,8 +586,8 @@ some_operation()
 八、单元测试（UNITTEST）
 ----
 
-详情请看 test.py 文件
-> https://github.com/Tiacx/chain-pymysql/test.py
+详情请看 chain_pymysql/test.py 文件
+> https://github.com/Tiacx/china-pymysql/blob/master/chain_pymysql/test.py
 
 <br>
 
