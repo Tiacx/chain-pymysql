@@ -6,7 +6,7 @@ setup(
     version='1.0.1',
     url='https://github.com/Tiacx/chain-pymysql',
     project_urls={
-        'Documentation': 'https://github.com/Tiacx/chain-pymysql/README.md',
+        'Documentation': 'https://github.com/Tiacx/china-pymysql',
     },
     description='Easy to use pymysql.',
     author='Taic',
