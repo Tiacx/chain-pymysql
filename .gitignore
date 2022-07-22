@@ -1,1 +1,3 @@
-pypi
+pypi/chain_pymysql
+pypi/chain_pymysql.egg-info
+pypi/dist

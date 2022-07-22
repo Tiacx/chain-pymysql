@@ -4,7 +4,7 @@
 # @copyright Copyright (c) 2022 Tiac
 # @license MIT
 # @author Tiac
-# @since 1.0
+# @since 1.0.0
 
 import re
 import json
@@ -93,6 +93,8 @@ class imysql:
     def __init__(self, cursor=None):
         # 数据
         self.data = dict()
+        # 原生SQL
+        self.raw_sql = ''
         # 上一个SQL
         self.last_sql = ''
         # 游标
@@ -200,46 +202,52 @@ class imysql:
         self.data['table'] = self.__class__.gen_table(table, alias)
         return self
 
-    @staticmethod
-    def execute(sql: str, args=None, fetch=False):
+    @classmethod
+    def execute(cls, sql: str, args=None, fetch=False):
         ''' 执行原生SQL
 
         :param sql
         :param args: sql 参数
-        :return cursor 或 result
+        :return imysql 或 result
         '''
 
-        global_cursor.execute(sql, args)
-
-        cache_data['last_sql'] = sql
-        cache_data['last_operation'] = 'execute'
-        cache_data['last_insert_id'] = global_cursor.connection.insert_id()
-        cache_data['effected_rows'] = global_cursor.rowcount
-
-        if fetch is True:
-            return global_cursor.fetchall()
-        else:
-            return global_cursor
+        instance = cls()
+        return instance._execute(sql=sql, args=args, fetch=fetch)
 
     def _execute(self, sql: str, args=None, fetch=False):
         ''' 执行原生SQL
 
         :param sql
         :param args: sql 参数
-        :return cursor 或 result
+        :return imysql 或 result
         '''
+        
+        sql = global_cursor.mogrify(sql, args)
 
-        self.cursor.execute(sql, args)
+        operation = sql.split(' ')[0].strip().lower()
+        
+        if operation in ['insert', 'replace', 'update', 'delete', 'truncate', 'create', 'drop', 'alter']:
+            with transaction.atomic(self.conn):
+                self.cursor.execute(sql)
 
-        cache_data['last_sql'] = sql
-        cache_data['last_operation'] = 'execute'
-        cache_data['last_insert_id'] = self.conn.insert_id()
-        cache_data['effected_rows'] = self.cursor.rowcount
+                # 记录SQL信息
+                cache_data['last_sql'] = sql
+                cache_data['last_operation'] = operation
+                cache_data['last_insert_id'] = global_cursor.connection.insert_id()
+                cache_data['effected_rows'] = global_cursor.rowcount
 
-        if fetch is True:
-            return self.cursor.fetchall()
+                return cache_data['last_insert_id'] if operation == 'insert' else cache_data['effected_rows']
         else:
-            return self.cursor
+            self.raw_sql = sql
+        
+            # 记录SQL信息
+            cache_data['last_operation'] = 'select'
+            cache_data['last_sql'] = sql
+            
+            if fetch is False:
+                return self
+            else:
+                return self.all(fetch=True)
 
     @classmethod
     def gen_table(cls, table: str, alias=''):
@@ -597,6 +605,9 @@ class imysql:
     def get_raw_sql(self, wrapper=''):
         ''' 获取原生 SQL '''
 
+        if self.raw_sql != '':
+            return self.raw_sql
+
         table = self.data.get('table')
         fields = self.data.get('fields', '*')
         
@@ -628,7 +639,15 @@ class imysql:
         cache_data['last_operation'] = 'select'
         cache_data['last_sql'] = sql
 
+        self.raw_sql = sql
+
         return sql
+
+    def reset_data(self):
+        ''' 重置数据 '''
+
+        self.data = dict()
+        self.raw_sql = ''
 
     def all(self, fetch=False):
         ''' 查询多行
@@ -639,8 +658,7 @@ class imysql:
 
         sql = self.get_raw_sql()
         self.cursor.execute(sql)
-        # 清空SQL数据
-        self.data = dict()
+        self.reset_data()
         
         if fetch is True:
             return self.cursor.fetchall()
@@ -673,8 +691,7 @@ class imysql:
         
         sql = self.get_raw_sql()
         self.cursor.execute(sql)
-        # 清空SQL数据
-        self.data = dict()
+        self.reset_data()
         
         return self.cursor.fetchone()
 
@@ -709,8 +726,7 @@ class imysql:
         
         sql = self.get_raw_sql(wrapper)
         self.cursor.execute(sql)
-        # 清空SQL数据
-        self.data = dict()
+        self.reset_data()
         one = self.cursor.fetchone()
         return one.get('ct') if one else False
 

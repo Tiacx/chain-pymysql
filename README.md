@@ -340,16 +340,11 @@ results = (
 ```python
 sql = 'SELECT * FROM table1 WHERE id=%s'
 # 解析多行
-results = imysql.execute(sql, (3,)).fetchall()
+results = imysql.execute(sql, (3,)).all(fetch=True)
 # 解析单行
-one = imysql.execute(sql, (3,)).fetchone()
-
-# 如果sql类型为insert、replace、update或delete，需要自己提交事务
-try:
-    cursor = imysql.execute('DELETE FROM table1 WHERE name IN ("赵六", "陈七")')
-    cursor.connection.commit()
-except Exception as e:
-    cursor.connection.rollback()
+one = imysql.execute(sql, (3,)).one()
+# 其他操作请看 “六、返回值（RETURNED VALUE）”
+names = imysql.execute(sql, (3,)).index('id', 'name')
 
 # 切换数据库来执行SQL
 imysql.switch('other').execute(sql)

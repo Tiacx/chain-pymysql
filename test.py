@@ -274,20 +274,14 @@ class TestCase(unittest.TestCase):
         sql = 'SELECT * FROM table1 WHERE id=%s'
         
         # 解析多行
-        results = imysql.execute(sql, (3,)).fetchall()
+        results = imysql.execute(sql, (3,)).all(fetch=True)
         self.assertEqual(len(results), 1)
         # 解析单行
-        one = imysql.execute(sql, (3,)).fetchone()
+        one = imysql.execute(sql, (3,)).one()
         self.assertEqual(one.get('id'), 3)
-    
-        # 如果sql类型为insert、replace、update或delete，需要自己提交事务
-        
-        try:
-            cursor = imysql.execute('DELETE FROM table1 WHERE name IN ("赵六", "陈七")')
-            cursor.connection.commit()
-        except Exception as e:
-            cursor.connection.rollback()
-            # print(e)
+        # 其他操作请看 test_1_6
+        names = imysql.execute(sql, (3,)).index('id', 'name')
+        self.assertEqual(names.get(3), '张三')
         
         # 切换数据库来执行SQL，详情请看：test_2_7
         # imysql.switch('other').execute(sql)
