@@ -582,7 +582,7 @@ some_operation()
 ----
 
 详情请看 chain_pymysql/test.py 文件
-> https://github.com/Tiacx/china-pymysql/blob/master/chain_pymysql/test.py
+> https://github.com/Tiacx/china-pymysql/blob/master/test.py
 
 <br>
 
