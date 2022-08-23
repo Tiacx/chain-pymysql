@@ -283,7 +283,10 @@ class imysql:
 
         s = ''
         for k, v in data.items():
-            s += "`{}`='{}',".format(k, v)
+            if v is None:
+                s += "`{}`=NULL,".format(k)
+            else:
+                s += "`{}`='{}',".format(k, v)
 
         s = s[0:-1]
         return s

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from distutils.core import setup
 
-version = '1.0.2'
+version = '1.0.3'
 
 with open('./README.rst', encoding='utf-8') as f:
     readme = f.read()
@@ -13,7 +13,7 @@ setup(
     project_urls={
         'Documentation': 'https://github.com/Tiacx/chain-pymysql',
     },
-    description='Easy to use pymysql.',
+    description='Easy to use PyMySQL.',
     long_description=readme,
     author='Taic',
     packages=['chain_pymysql'],
