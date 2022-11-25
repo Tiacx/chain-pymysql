@@ -12,7 +12,8 @@ import pymysql
 import pymysql.connections
 from pymysql import converters, FIELD_TYPE
 from pymysql.converters import escape_string
-from . import exceptions
+from . import dqlparse, exceptions
+
 
 # 连接集合
 connections = dict()
@@ -90,6 +91,9 @@ class transaction:
 # 查询构建器
 class imysql:
 
+    # 默认连接（静态变量）
+    default_conn = None
+
     def __init__(self, cursor=None):
         # 数据
         self.data = dict()
@@ -116,9 +120,6 @@ class imysql:
         :param https://pymysql.readthedocs.io/en/latest/modules/connections.html
         '''
 
-        if name in connections:
-            raise exceptions.RuntimeError((400, '请忽重复连接【%s】' % name))
-
         global global_cursor
 
         if 'charset' not in options:
@@ -137,13 +138,19 @@ class imysql:
             options['conv'] = conv
 
         # 连接
-        conn = pymysql.connect(**options)
-        # 保存连接
-        connections[name] = conn
+
+        if name in connections:
+            # raise exceptions.RuntimeError((400, '请忽重复连接【%s】' % name))
+            conn = connections[name]
+        else:
+            conn = pymysql.connect(**options)
+            # 保存连接
+            connections[name] = conn
         
         # 全局游标
         if global_cursor is None:
             global_cursor = conn.cursor()
+            cls.default_conn = global_cursor.connection
         
         return conn
     
@@ -180,6 +187,7 @@ class imysql:
         # 全局游标
         if inplace is True:
             global_cursor = cursor
+            cls.default_conn = global_cursor.connection
             return cls
         else:
             # 实例化
@@ -208,17 +216,19 @@ class imysql:
 
         :param sql
         :param args: sql 参数
+        :param fetch: False：返回 self，True：返回 list
         :return imysql 或 result
         '''
 
         instance = cls()
-        return instance._execute(sql=sql, args=args, fetch=fetch)
+        return instance._execute(sql, args=args, fetch=fetch)
 
     def _execute(self, sql: str, args=None, fetch=False):
         ''' 执行原生SQL
 
         :param sql
         :param args: sql 参数
+        :param fetch: False：返回 self，True：返回 list
         :return imysql 或 result
         '''
         
@@ -248,6 +258,95 @@ class imysql:
                 return self
             else:
                 return self.all(fetch=True)
+
+    @classmethod
+    def execute_cross(cls, sql: str, chunk_size=500):
+        ''' 执行跨库（连接）查询
+
+        :param sql
+        :return generator
+        '''
+        
+        sql_list, bridging, column_alias = dqlparse.DqlParse().split_sql(sql)
+        
+        # 需要的字段
+        needs = {key: '' for key in column_alias}
+
+        flag = True
+        for name, sql in sql_list.items():
+            if flag is True:
+                flag = False
+                cursor = imysql.switch(name).execute(sql).all()
+
+                if len(sql_list) == 1:
+                    yield cursor
+                    break
+            else:
+                join_type, join_condition = bridging.get(name)
+
+                chunk = dict()
+                codes_mapping = dict()
+
+                for item in cursor:
+                    keys = []
+                    for t in join_condition:
+                        value = str(item.get(t[0]))
+                        keys.append(value)
+                        if t[0] not in codes_mapping:
+                            codes_mapping[t[0]] = []
+                        codes_mapping[t[0]].append(value)
+                    unique_key = '_'.join(keys)
+                    chunk[unique_key] = item
+                    
+                    if len(chunk) == chunk_size:
+                        yield cls.handle_cross_chunk(needs, chunk, codes_mapping, sql, join_type, join_condition, name)
+                        chunk.clear()
+                        codes_mapping.clear()
+
+                if len(chunk) > 0:
+                    yield cls.handle_cross_chunk(needs, chunk, codes_mapping, sql, join_type, join_condition, name)
+                    chunk.clear()
+                    codes_mapping.clear()
+
+    @classmethod
+    def handle_cross_chunk(cls, needs: dict, chunk: dict, codes_mapping: dict, sql: str, join_type: str, join_condition: list, name: str):
+        ''' 执行跨库（连接）查询 - 块处理 '''
+
+        for t in join_condition:
+            codes = "','".join(codes_mapping.get(t[0]))
+            sql += f" AND {t[1]} IN ('{codes}')"
+
+        sql = sql.replace('WHERE 1  AND', 'WHERE')
+
+        extra_data = imysql.switch(name).execute(sql).all()
+        
+        extra_mapping = dict()
+
+        for item in extra_data:
+            keys = []
+            for t in join_condition:
+                keys.append(str(item.get(t[0])))
+            unique_key = '_'.join(keys)
+            extra_mapping[unique_key] = item
+
+        join_type = join_type.upper()
+
+        for unique_key, item in chunk.items():
+            extra = extra_mapping.get(unique_key)
+            if extra is not None:
+                chunk[unique_key].update(extra)
+
+            # 过滤字段
+            out = needs.copy()
+            for k, v in chunk[unique_key].items():
+                if k in needs:
+                    out[k] = v
+
+            if join_type == 'LEFT':
+                yield out
+            elif join_type in ['RIGHT', 'INNER']:
+                if extra is not None:
+                    yield out
 
     @classmethod
     def gen_table(cls, table: str, alias=''):
@@ -855,7 +954,16 @@ class imysql:
     def get_effected_rows():
         return cache_data.get('effected_rows', 0)
 
-    @classmethod
-    @property
-    def default_conn(cls):
-        return global_cursor.connection
+    @staticmethod
+    def close(name=None):
+        if name is not None:
+            if name in connections:
+                conn = connections.get(name)
+                conn.cursor().close()
+                conn.close()
+                del connections[name]
+        else:
+            for name, conn in connections.items():
+                conn.cursor().close()
+                conn.close()
+            connections.clear()

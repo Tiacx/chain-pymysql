@@ -552,9 +552,6 @@ class TestCase(unittest.TestCase):
         ''' 内置异常 '''
 
         import chain_pymysql.exceptions
-
-        with self.assertRaises(chain_pymysql.exceptions.RuntimeError):
-            imysql.connect({}, name='default')
         
         with self.assertRaises(chain_pymysql.exceptions.RuntimeError):
             imysql.switch('db1')
@@ -575,6 +572,22 @@ class TestCase(unittest.TestCase):
         except chain_pymysql.exceptions.RuntimeError as e:
             self.assertEqual(e.code, 403)
             self.assertEqual(e.get_code(), 403)
+
+    def test_3_2(self):
+        ''' 跨库（连接）查询 '''
+        
+        # sql = 'xxx'
+        
+        # results = imysql.execute_cross(sql, chunk_size=500)
+        
+        # for chunk in results:
+        #     for item in chunk:
+        #         print(item)
+
+    def test_9_9(self):
+        ''' 关闭数据连接 '''
+
+        imysql.close()
 
 
 if __name__ == '__main__':

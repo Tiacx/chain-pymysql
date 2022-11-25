@@ -12,23 +12,24 @@ Easy to use PyMySQL.
 ----
 
 + [一、安装说明（INSTALLATION）](#一安装说明installation)
-+ [二、连接数据库（CONNECTION）](#二连接数据库connection)
++ [二、数据库连接（CONNECTIONS）](#二数据库连接connections)
     + [2.1 连接数据库](#21-连接数据库)
     + [2.2 切换数据库连接](#22-切换数据库连接)
     + [2.3 使用同连接的其他数据库](#23-使用同连接的其他数据库)
+    + [2.4 关闭数据库连接](#24-关闭数据库连接)
 + [三、增删改查（CURD）](#三增删改查curd)
     + [3.1 增](#31-增)
     + [3.2 删](#32-删)
     + [3.3 改](#33-改)
     + [3.4 查](#34-查)
-        + [3.4.1 字符串条件](#341-字符串条件)
-        + [3.4.2 字典条件查询](#342-字典条件查询)
-        + [3.4.3 IN 查询](#343-in-查询)
-        + [3.4.4 LIKE 模糊查询](#344-like-模糊查询)
-        + [3.4.5 BETWEEN 查询](#345-between-查询)
-        + [3.4.6 追加查询 and_where](#346-追加查询-and_where)
-        + [3.4.7 OR 查询 or_where](#347-or-查询-or_where)
-        + [3.4.8 其他操作符](#348-其他操作符)
+    + [3.4.1 字符串条件](#341-字符串条件)
+    + [3.4.2 字典条件查询](#342-字典条件查询)
+    + [3.4.3 IN 查询](#343-in-查询)
+    + [3.4.4 LIKE 模糊查询](#344-like-模糊查询)
+    + [3.4.5 BETWEEN 查询](#345-between-查询)
+    + [3.4.6 追加查询 and_where](#346-追加查询-and_where)
+    + [3.4.7 OR 查询 or_where](#347-or-查询-or_where)
+    + [3.4.8 其他操作符](#348-其他操作符)
 + [四、查询构建器（QUERY BUILDER）](#四查询构建器query-builder)
     + [4.1 选择字段 select](#41-选择字段-select)
     + [4.2 联表查询 join](#42-联表查询-join)
@@ -38,6 +39,7 @@ Easy to use PyMySQL.
 + [五、执行原生SQL（RAW SQL）](#五执行原生sqlraw-sql)
     + [5.1 执行原生SQL示例](#51-执行原生sql示例)
     + [5.2 使用助手函数来拼接SQL（防注入）](#52-使用助手函数来拼接sql防注入)
+    + [5.3 跨库（跨实例、跨连接）联表查询](#53-跨库跨实例跨连接联表查询)
 + [六、返回值（RETURNED VALUE）](#六返回值returned-value)
     + [6.1 统计 count](#61-统计-count)
     + [6.2 多行 all](#62-多行-all)
@@ -71,7 +73,7 @@ Easy to use PyMySQL.
 
 <br>
 
-二、连接数据库（CONNECTION）
+二、数据库连接（CONNECTIONS）
 ----
 
 #### 2.1 连接数据库
@@ -118,7 +120,6 @@ imysql.switch('other', inplace=True).table('table1').limit(10).all()
 imysql.table('table1').limit(10).all() # 这里查询的是 db2 连接里的 table1
 ```
 
-
 #### 2.3 使用同连接的其他数据库
 
 Method: `table(table: str, alias='')`
@@ -132,6 +133,15 @@ orders = imysql.table('test_order.order').select('order_code, total_amount').whe
 }).order_by('order_code desc').all(fetch=True)
 print(orders)
 ```
+
+#### 2.4 关闭数据库连接
+
+Method: `imysql.close(name=None)`
+> Since: 1.0.4  
+
+关闭指定数据库连接：`imysql.close(name='other')`
+
+关闭所有数据库连接：`imysql.close()`
 
 <br>
 
@@ -371,6 +381,74 @@ sql = f'SELECT t1.`name`, avg(t2.age) AS age FROM table1 t1 LEFT JOIN table2 t2 
 results = imysql.execute(sql, fetch=True)
 for item in results:
     print(item)
+```
+
+##### 5.3 跨库（跨实例、跨连接）联表查询
+
+Method: `imysql.execute_cross(sql: str, chunk_size=500)`
+> Since: 1.0.4  
+
+> 注：水平有限，不保证数据100%正确；此功能可用于简单跨库查询数据报表的查询及导出，省去手工拼接数据的麻烦。
+
+使用说明：
+1. 表名必须带连接名前缀，例如：prod1.`prod_order`.`dd_order`
+2. <b>表名必须定义别名</b>，例如：prod1.`prod_order`.`dd_order` t1
+3. 建议只使用<b>主库字段做为查询条件</b>，使用跨实例的关联表字段做条件时，查询结果可能会出现意外错误
+4. 查询条件<b>不支持 BETWEEN ... AND ...</b>，请使用 >= 和 < 代替
+5. 支持 LEFT JOIN、RIGHT JOIN 及 INNER JOIN；<b>仅支持主库字段排序</b>，支持 LIMIT
+
+使用示例：
+
+```python
+imysql.connect({...}, name='prod1')
+imysql.connect({...}, name='prod2')
+
+sql = '''
+SELECT
+    t1.`order_code`,
+    t2.`out_code`
+FROM
+    prod1.`prod_order`.`dd_order` t1
+LEFT JOIN prod2.`prod_logistics`.`wl_storageout` t2 ON t1.`order_code` = t2.`order_code`
+WHERE
+    t1.`create_time` >= '2022-10-01 00:00:00'
+AND t1.`create_time` <= '2022-10-31 23:59:59'
+ORDER BY
+    t1.`create_time` ASC
+'''
+
+results = imysql.execute_cross(sql, chunk_size=500)
+for chunk in results:
+    for item in chunk:
+        print(item)
+```
+
+
+结合 Flask 导出 csv （部分代码）：
+
+```python
+from flask import Response
+
+def iter_csv(self, results):
+    flag = False
+    for chunk in results:
+        for item in chunk:
+            if flag is False:
+                yield ','.join(item.keys()) + '\n'
+                flag = True
+            yield ','.join(f'"{x}"' if type(x) is str and x.find('\n')>-1 else f'{x}' for x in item.values()) + '\n'
+
+def export(self):
+    ...
+    results = imysql.execute_cross(sql, chunk_size=500)
+
+    filename = 'Export_%s.csv' % time.strftime('%Y%m%d%H%M%S')
+
+    csv_data = self.iter_csv(results)
+    response = Response(csv_data, mimetype='text/csv')
+    response.headers['Content-Type'] = 'application/vnd.ms-excel; charset=gb18030'
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
 ```
 
 <br>

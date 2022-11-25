@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from distutils.core import setup
 
-version = '1.0.3'
+version = '1.0.4'
 
 with open('./README.rst', encoding='utf-8') as f:
     readme = f.read()

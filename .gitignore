@@ -1,3 +1,5 @@
 pypi/chain_pymysql
 pypi/chain_pymysql.egg-info
 pypi/dist
+*/__pycache__
+*.pyc
