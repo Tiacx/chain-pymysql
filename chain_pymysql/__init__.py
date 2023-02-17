@@ -9,6 +9,7 @@
 import re
 import json
 import pymysql
+import threading
 import pymysql.connections
 from pymysql import converters, FIELD_TYPE
 from pymysql.converters import escape_string
@@ -17,10 +18,14 @@ from . import dqlparse, exceptions
 
 # 连接集合
 connections = dict()
-# 全局游标
-global_cursor = None
+# 全局连接
+global_conn = None
 # 缓存信息
 cache_data = dict()
+# 线程锁
+thread_lock = threading.Lock()
+# 线程锁超时时间
+locked_timeout = 10
 
 
 # 事务处理
@@ -31,7 +36,7 @@ class transaction:
     def __init__(self, conn=None):
         # 游标
         if conn is None:
-            self.conn = global_cursor.connection
+            self.conn = global_conn
         else:
             self.conn = conn
 
@@ -46,16 +51,19 @@ class transaction:
         # 装饰器
         def wrapper(*args, **kwargs):
             cls.adjust_level(1)
-            
+
             try:
                 result = conn_or_func(*args, **kwargs)
                 cls.adjust_level(-1)
                 if cls.get_level() == 0:
-                    global_cursor.connection.commit()
+                    global_conn.commit()
                 return result
             except Exception as e:
                 cls.adjust_level(-1)
-                global_cursor.connection.rollback()
+                global_conn.rollback()
+                # 释放锁
+                if thread_lock.locked() is True:
+                    thread_lock.release()
                 raise e
 
         return wrapper
@@ -77,6 +85,9 @@ class transaction:
                 # 回滚后，插入ID和影响行数都改为0
                 cache_data['effected_rows'] = 0
                 cache_data['last_insert_id'] = 0
+                # 释放锁
+                if thread_lock.locked() is True:
+                    thread_lock.release()
                 return False
 
     @classmethod
@@ -94,24 +105,31 @@ class imysql:
     # 默认连接（静态变量）
     default_conn = None
 
-    def __init__(self, cursor=None):
+    def __init__(self, conn=None):
+
         # 数据
         self.data = dict()
         # 原生SQL
         self.raw_sql = ''
         # 上一个SQL
         self.last_sql = ''
-        # 游标
-        if cursor is not None:
-            self.cursor = cursor
-        else:
-            self.cursor = global_cursor
-
         # 连接
-        self.conn = self.cursor.connection
-        
+        if conn is not None:
+            self.conn = conn
+        else:
+            self.conn = global_conn
+
+        # 加线程锁
+        thread_lock.acquire(timeout=locked_timeout)
+
         # 断线重连
         self.conn.ping(reconnect=True)
+
+        # 游标
+        self.cursor = self.conn.cursor()
+
+        # 释放锁
+        thread_lock.release()
 
     @classmethod
     def connect(cls, options: dict, name='default'):
@@ -120,25 +138,28 @@ class imysql:
         :param https://pymysql.readthedocs.io/en/latest/modules/connections.html
         '''
 
-        global global_cursor
+        global global_conn
+        
+        conv = converters.conversions
+        conv[FIELD_TYPE.NEWDECIMAL] = float
+        conv[FIELD_TYPE.DATE] = str
+        conv[FIELD_TYPE.TIMESTAMP] = str
+        conv[FIELD_TYPE.DATETIME] = str
+        conv[FIELD_TYPE.TIME] = str
 
-        if 'charset' not in options:
-            options['charset'] = 'utf8'
+        # 默认参数
+        default_options = {
+            'charset': 'utf8',
+            'cursorclass': pymysql.cursors.DictCursor,
+            'conv': conv,
+            'use_unicode': True,
+        }
 
-        if 'cursorclass' not in options:
-            options['cursorclass'] = pymysql.cursors.DictCursor
-
-        if 'conv' not in options:
-            conv = converters.conversions
-            conv[FIELD_TYPE.NEWDECIMAL] = float
-            conv[FIELD_TYPE.DATE] = str
-            conv[FIELD_TYPE.TIMESTAMP] = str
-            conv[FIELD_TYPE.DATETIME] = str
-            conv[FIELD_TYPE.TIME] = str
-            options['conv'] = conv
+        # 合并参数
+        default_options.update(options)
+        options = default_options
 
         # 连接
-
         if name in connections:
             # raise exceptions.RuntimeError((400, '请忽重复连接【%s】' % name))
             conn = connections[name]
@@ -146,14 +167,14 @@ class imysql:
             conn = pymysql.connect(**options)
             # 保存连接
             connections[name] = conn
-        
+
         # 全局游标
-        if global_cursor is None:
-            global_cursor = conn.cursor()
-            cls.default_conn = global_cursor.connection
-        
+        if global_conn is None:
+            global_conn = conn
+            cls.default_conn = conn
+
         return conn
-    
+
     @classmethod
     def switch(cls, name: str, db_name=None, inplace=False):
         ''' 切换数据库连接
@@ -164,7 +185,7 @@ class imysql:
         :return cursor
         '''
 
-        global global_cursor
+        global global_conn
         
         if name.find('.') > -1:
             name, db_name = name.split('.')
@@ -175,23 +196,28 @@ class imysql:
         
         # 连接
         conn = connections[name]
+
+        # 加线程锁
+        thread_lock.acquire(timeout=locked_timeout)
+
         # 断线重连
         conn.ping(reconnect=True)
-        # 游标
-        cursor = conn.cursor()
 
         # 切换到同连接的其他数据库
         if db_name is not None:
             conn.select_db(db_name)
-        
+
+        # 释放锁
+        thread_lock.release()
+
         # 全局游标
         if inplace is True:
-            global_cursor = cursor
-            cls.default_conn = global_cursor.connection
+            global_conn = conn
+            cls.default_conn = conn
             return cls
         else:
             # 实例化
-            instance = cls(cursor=cursor)
+            instance = cls(conn=conn)
             # 动态修改 table 方法
             instance.table = instance._table
             # 动态修改 execute 方法
@@ -231,11 +257,13 @@ class imysql:
         :param fetch: False：返回 self，True：返回 list
         :return imysql 或 result
         '''
-        
-        sql = global_cursor.mogrify(sql, args)
+
+        thread_lock.acquire(timeout=locked_timeout)
+
+        sql = self.cursor.mogrify(sql, args)
 
         operation = sql.split(' ')[0].strip().lower()
-        
+
         if operation in ['insert', 'replace', 'update', 'delete', 'truncate', 'create', 'drop', 'alter']:
             with transaction.atomic(self.conn):
                 self.cursor.execute(sql)
@@ -243,21 +271,31 @@ class imysql:
                 # 记录SQL信息
                 cache_data['last_sql'] = sql
                 cache_data['last_operation'] = operation
-                cache_data['last_insert_id'] = global_cursor.connection.insert_id()
-                cache_data['effected_rows'] = global_cursor.rowcount
+                cache_data['last_insert_id'] = self.conn.insert_id()
+                cache_data['effected_rows'] = self.cursor.rowcount
 
+                thread_lock.release()
                 return cache_data['last_insert_id'] if operation == 'insert' else cache_data['effected_rows']
         else:
-            self.raw_sql = sql
-        
+            try:
+                self.cursor.execute(sql)
+            except Exception as e:
+                # 释放锁
+                thread_lock.release()
+                raise e
+
             # 记录SQL信息
+            self.raw_sql = sql
             cache_data['last_operation'] = 'select'
             cache_data['last_sql'] = sql
             
             if fetch is False:
-                return self
+                result = self
             else:
-                return self.all(fetch=True)
+                result = self.cursor.fetchall()
+
+            thread_lock.release()
+            return result
 
     @classmethod
     def execute_cross(cls, sql: str, chunk_size=500):
@@ -759,9 +797,9 @@ class imysql:
         '''
 
         sql = self.get_raw_sql()
-        self.cursor.execute(sql)
+        self._execute(sql)
         self.reset_data()
-        
+
         if fetch is True:
             return self.cursor.fetchall()
         else:
@@ -776,7 +814,7 @@ class imysql:
         '''
 
         result = dict()
-        
+
         for item in self.all():
             if value is None:
                 result[item.get(key)] = item
@@ -790,11 +828,11 @@ class imysql:
 
         self.skip(num=0)
         self.limit(num=1)
-        
+
         sql = self.get_raw_sql()
-        self.cursor.execute(sql)
+        self._execute(sql)
         self.reset_data()
-        
+
         return self.cursor.fetchone()
 
     def scalar(self):
@@ -827,7 +865,7 @@ class imysql:
             self.data['fields'] = 'count(*) as ct'
         
         sql = self.get_raw_sql(wrapper)
-        self.cursor.execute(sql)
+        self._execute(sql)
         self.reset_data()
         one = self.cursor.fetchone()
         return one.get('ct') if one else False
@@ -840,13 +878,16 @@ class imysql:
         :param verify: 是否验证数据合法性，默认 True
         :return 影响行数，当 return_insert_id = True 时，返回 insert_id
         '''
-        
+
         if verify is True and self.__class__.check_validity(data) is False:
             raise exceptions.RuntimeError((403, '插入内容中包含非法字符'))
 
+        # 加线程锁
+        thread_lock.acquire(timeout=locked_timeout)
+
         # 开启事务处理
         with transaction.atomic(self.conn):
-            
+
             table = self.data.get('table')
             fields = self.gen_fields(data)
             values = self.gen_values(data)
@@ -854,14 +895,21 @@ class imysql:
             placeholder = "(%s)" % (','.join(types))
 
             sql = f'INSERT INTO {table} {fields} VALUES {placeholder}'
-            
-            effected_rows = self.cursor.executemany(sql, values)
+
+            try:
+                effected_rows = self.cursor.executemany(sql, values)
+            except Exception as e:
+                thread_lock.release()
+                raise e
+
             insert_id = self.conn.insert_id()
             # 记录SQL信息
             cache_data['last_operation'] = 'insert'
             cache_data['last_sql'] = sql
             cache_data['effected_rows'] = effected_rows
             cache_data['last_insert_id'] = insert_id
+            # 释放锁
+            thread_lock.release()
             # 返回插入的ID或影响的行数
             return insert_id if return_insert_id else effected_rows
 
@@ -897,7 +945,7 @@ class imysql:
                 limit=" LIMIT " + str(limit) if limit > 0 else ''
             )
 
-            effected_rows = self.cursor.execute(sql)
+            effected_rows = self._execute(sql)
 
             # 记录SQL信息
             cache_data['last_operation'] = 'update'
@@ -933,7 +981,7 @@ class imysql:
                 limit=" LIMIT " + str(limit) if limit > 0 else ''
             )
             
-            effected_rows = self.cursor.execute(sql)
+            effected_rows = self._execute(sql)
 
             # 记录SQL信息
             cache_data['last_operation'] = 'delete'

@@ -576,13 +576,34 @@ class TestCase(unittest.TestCase):
     def test_3_2(self):
         ''' 跨库（连接）查询 '''
         
-        # sql = 'xxx'
+        sql = 'SELECT t1.id, t2.name FROM default.test.table1 t1 LEFT JOIN other.test2.table1 t2 ON t1.id = t2.id WHERE t1.id = 4'
         
-        # results = imysql.execute_cross(sql, chunk_size=500)
+        results = imysql.execute_cross(sql, chunk_size=500)
         
-        # for chunk in results:
-        #     for item in chunk:
-        #         print(item)
+        '''
+        for chunk in results:
+            for item in chunk:
+                print(item)
+        '''
+
+    def test_3_3(self):
+        ''' 并发查询 '''
+        
+        import random
+        from threading import Thread
+
+        def get_by_id(_id: int):
+            imysql.table('table1').select('name').where({'id': _id}).scalar()
+
+        ths = []
+        for i in range(10):
+            _id = random.randint(3, 9)
+            t = Thread(target=get_by_id, args=(_id,))
+            ths.append(t)
+            t.start()
+
+        for t in ths:
+            t.join()
 
     def test_9_9(self):
         ''' 关闭数据连接 '''
